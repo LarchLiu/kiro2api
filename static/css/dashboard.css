@@ -266,3 +266,89 @@ tr:hover {
         font-size: 0.9rem;
     }
 }
+
+/* --- 登录页面样式 --- */
+#login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.login-box {
+    width: 100%;
+    max-width: 400px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 20px;
+    padding: 40px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    color: white;
+}
+
+.login-box h1 {
+    font-size: 2rem;
+    font-weight: 300;
+    margin-bottom: 10px;
+}
+
+.login-box p {
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 30px;
+}
+
+#token-input {
+    width: 100%;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    color: white;
+    font-size: 1rem;
+    margin-bottom: 20px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+#token-input::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+#token-input:focus {
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+}
+
+#login-btn {
+    width: 100%;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 10px;
+    color: white;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+#login-btn:hover {
+    background: rgba(255, 255, 255, 0.4);
+    transform: translateY(-2px);
+}
+
+#login-btn:active {
+    transform: translateY(0);
+}
+
+.error-message {
+    color: #ff8a80; /* A softer red for dark backgrounds */
+    margin-top: 15px;
+    height: 20px; /* Reserve space to prevent layout shift */
+    font-weight: 500;
+    transition: opacity 0.3s ease;
+}

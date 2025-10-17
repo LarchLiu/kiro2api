@@ -7,7 +7,17 @@
     <link rel="stylesheet" href="/static/css/dashboard.css">
 </head>
 <body>
-    <div class="container">
+    <div id="login-container">
+        <div class="login-box">
+            <h1>🔐 KIRO Token Dashboard</h1>
+            <p>请输入访问令牌以继续</p>
+            <input type="password" id="token-input" placeholder="请输入 KIRO_CLIENT_TOKEN">
+            <button id="login-btn">验证</button>
+            <p id="error-message" class="error-message"></p>
+        </div>
+    </div>
+
+    <div class="container" id="dashboard-container" style="display: none;">
         <div class="header">
             <h1>🔐 KIRO Token Dashboard</h1>
             <p>实时监控Token池状态和使用情况</p>

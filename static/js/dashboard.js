@@ -1,21 +1,112 @@
 /**
  * Token Dashboard - 前端控制器
- * 基于模块化设计，遵循单一职责原则
+ * 包含身份验证和仪表盘功能
  */
-
 class TokenDashboard {
     constructor() {
         this.autoRefreshInterval = null;
         this.isAutoRefreshEnabled = false;
         this.apiBaseUrl = '/api';
-        
-        this.init();
+        this.isAuthenticated = false;
+
+        this.initAuth();
     }
 
     /**
-     * 初始化Dashboard
+     * 初始化身份验证流程
      */
-    init() {
+    initAuth() {
+        const loginBtn = document.getElementById('login-btn');
+        const tokenInput = document.getElementById('token-input');
+
+        // 检查 sessionStorage 中是否已存在 token
+        const storedToken = sessionStorage.getItem('kiro_client_token');
+        if (storedToken) {
+            this.verifyToken(storedToken, true); // 静默验证
+        }
+
+        if (loginBtn) {
+            loginBtn.addEventListener('click', () => {
+                const token = tokenInput.value.trim();
+                if (token) {
+                    this.verifyToken(token, false);
+                } else {
+                    this.showLoginError('请输入访问令牌');
+                }
+            });
+        }
+
+        if (tokenInput) {
+            tokenInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    loginBtn.click();
+                }
+            });
+        }
+    }
+
+    /**
+     * 验证 Token
+     * @param {string} token - 要验证的 token
+     * @param {boolean} isSilent - 是否是静默验证 (来自 sessionStorage)
+     */
+    async verifyToken(token, isSilent = false) {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/verify-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.valid) {
+                    sessionStorage.setItem('kiro_client_token', token);
+                    this.isAuthenticated = true;
+                    this.showDashboard();
+                    this.initDashboard();
+                } else {
+                    sessionStorage.removeItem('kiro_client_token');
+                    if (!isSilent) this.showLoginError('令牌无效或已过期');
+                }
+            } else {
+                sessionStorage.removeItem('kiro_client_token');
+                if (!isSilent) this.showLoginError(`验证失败 (HTTP ${response.status})`);
+            }
+        } catch (error) {
+            console.error('验证令牌时出错:', error);
+            if (!isSilent) this.showLoginError('验证请求失败，请检查网络连接');
+        }
+    }
+
+    /**
+     * 显示登录错误信息
+     * @param {string} message - 错误信息
+     */
+    showLoginError(message) {
+        const errorMessageEl = document.getElementById('error-message');
+        if (errorMessageEl) {
+            errorMessageEl.textContent = message;
+            setTimeout(() => {
+                errorMessageEl.textContent = '';
+            }, 3000);
+        }
+    }
+
+    /**
+     * 显示仪表盘，隐藏登录界面
+     */
+    showDashboard() {
+        const loginContainer = document.getElementById('login-container');
+        const dashboardContainer = document.getElementById('dashboard-container');
+        if (loginContainer) loginContainer.style.display = 'none';
+        if (dashboardContainer) dashboardContainer.style.display = 'block';
+    }
+
+    /**
+     * 初始化Dashboard (验证成功后调用)
+     */
+    initDashboard() {
         this.bindEvents();
         this.refreshTokens();
     }
@@ -24,13 +115,11 @@ class TokenDashboard {
      * 绑定事件处理器 (DRY原则)
      */
     bindEvents() {
-        // 手动刷新按钮
         const refreshBtn = document.querySelector('.refresh-btn');
         if (refreshBtn) {
             refreshBtn.addEventListener('click', () => this.refreshTokens());
         }
 
-        // 自动刷新开关
         const switchEl = document.querySelector('.switch');
         if (switchEl) {
             switchEl.addEventListener('click', () => this.toggleAutoRefresh());
@@ -41,12 +130,24 @@ class TokenDashboard {
      * 获取Token数据 - 简单直接 (KISS原则)
      */
     async refreshTokens() {
+        if (!this.isAuthenticated) return;
+
         const tbody = document.getElementById('tokenTableBody');
         this.showLoading(tbody, '正在刷新Token数据...');
         
         try {
-            const response = await fetch(`${this.apiBaseUrl}/tokens`);
+            const response = await fetch(`${this.apiBaseUrl}/tokens`, {
+                headers: {
+                    'Authorization': `Bearer ${sessionStorage.getItem('kiro_client_token')}`
+                }
+            });
+
             if (!response.ok) {
+                if (response.status === 401) {
+                    sessionStorage.removeItem('kiro_client_token');
+                    window.location.reload();
+                    return;
+                }
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
@@ -223,7 +324,7 @@ class TokenDashboard {
     }
 }
 
-// DOM加载完成后初始化 (依赖注入原则)
+// DOM加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
     new TokenDashboard();
 });
