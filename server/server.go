@@ -43,9 +43,21 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	r.GET("/", func(c *gin.Context) {
 		c.File("./static/index.html")
 	})
+	r.GET("/healthy", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+		})
+	})
 
 	// API端点 - 纯数据服务
-	r.GET("/api/tokens", handleTokenPoolAPI)
+	apiGroup := r.Group("/api")
+	{
+		// 新增：Token验证端点
+		apiGroup.POST("/verify-token", handleVerifyToken)
+
+		// 使用新的DashboardAuthMiddleware保护Token池API
+		apiGroup.GET("/tokens", DashboardAuthMiddleware(), handleTokenPoolAPI)
+	}
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
@@ -248,6 +260,62 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("启动服务器失败", logger.Err(err), logger.String("port", port))
 		os.Exit(1)
+	}
+}
+
+// handleVerifyToken 处理Dashboard的访问令牌验证
+func handleVerifyToken(c *gin.Context) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"valid": false, "error": "无效的请求格式"})
+		return
+	}
+
+	kiroClientToken := os.Getenv("KIRO_CLIENT_TOKEN")
+	if kiroClientToken == "" {
+		logger.Warn("KIRO_CLIENT_TOKEN 环境变量未设置，验证功能将无法正常工作")
+		// 为了安全，如果环境变量未设置，则拒绝所有验证
+		c.JSON(http.StatusOK, gin.H{"valid": false, "error": "服务器端未配置令牌"})
+		return
+	}
+
+	if req.Token == kiroClientToken {
+		c.JSON(http.StatusOK, gin.H{"valid": true})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"valid": false})
+	}
+}
+
+// DashboardAuthMiddleware 为Dashboard API提供认证
+func DashboardAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		kiroClientToken := os.Getenv("KIRO_CLIENT_TOKEN")
+		if kiroClientToken == "" {
+			logger.Error("KIRO_CLIENT_TOKEN 环境变量未设置，Dashboard API认证失败")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "服务器端未配置令牌"})
+			return
+		}
+
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "未提供Authorization请求头"})
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization请求头格式错误"})
+			return
+		}
+
+		if parts[1] != kiroClientToken {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "无效的令牌"})
+			return
+		}
+
+		c.Next()
 	}
 }
 
