@@ -1,6 +1,8 @@
 services:
   kiro2api:
-    image: ghcr.io/caidaoli/kiro2api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: kiro2api
     restart: unless-stopped
     ports:
