@@ -50,13 +50,8 @@ func extractRelevantHeaders(c *gin.Context) map[string]string {
 }
 
 // handleStreamRequest 处理流式请求
-func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
-	// 转换为TokenWithUsage（简化版本）
-	tokenWithUsage := &types.TokenWithUsage{
-		TokenInfo:      token,
-		AvailableCount: 100, // 默认可用次数
-		LastUsageCheck: time.Now(),
-	}
+// handleStreamRequest 处理流式请求
+func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenWithUsage *types.TokenWithUsage) {
 	sender := &AnthropicStreamSender{}
 	handleGenericStreamRequest(c, anthropicReq, tokenWithUsage, sender, createAnthropicStreamEvents)
 }
@@ -215,7 +210,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 	// 使用新的符合AWS规范的解析器，但在非流式模式下增加超时保护
 	compliantParser := parser.NewCompliantEventStreamParser()
-	compliantParser.SetMaxErrors(5) // 限制最大错误次数以防死循环
+	compliantParser.SetMaxErrors(config.ParserMaxErrors) // 限制最大错误次数以防死循环
 
 	// 为非流式解析添加超时保护
 	result, err := func() (*parser.ParseResult, error) {
@@ -352,13 +347,34 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 使用新的stop_reason管理器，确保符合Claude官方规范
 	stopReasonManager := NewStopReasonManager(anthropicReq)
 
-	// 计算输出tokens（使用TokenEstimator统一算法）
-	baseTokens := estimator.EstimateTextTokens(textAgg)
-	outputTokens := baseTokens
-	if sawToolUse {
-		outputTokens = int(float64(baseTokens) * 1.2) // 增加20%结构化开销
+	// *** 关键修复：基于实际发送给客户端的内容计算 token ***
+	// 设计原则：token 计费应该基于实际下发的内容，而不是上游原始数据
+	// 原因：
+	// 1. 格式转换：CodeWhisperer → Claude 格式可能有差异
+	// 2. 计费准确性：客户端消费的是 contexts，而不是 textAgg/allTools
+	// 3. 一致性：确保 token 计算与实际响应内容完全一致
+	outputTokens := 0
+	for _, contentBlock := range contexts {
+		blockType, _ := contentBlock["type"].(string)
+		
+		switch blockType {
+		case "text":
+			// 文本块：基于实际发送的文本内容
+			if text, ok := contentBlock["text"].(string); ok {
+				outputTokens += estimator.EstimateTextTokens(text)
+			}
+		
+		case "tool_use":
+			// 工具调用块：基于实际发送的工具名称和参数
+			// 这里使用与 SSE 响应相同的 token 计算逻辑
+			toolName, _ := contentBlock["name"].(string)
+			toolInput, _ := contentBlock["input"].(map[string]any)
+			outputTokens += estimator.EstimateToolUseTokens(toolName, toolInput)
+		}
 	}
-	if outputTokens < 1 && len(textAgg) > 0 {
+
+	// 最小 token 保护：确保非空响应至少有 1 token
+	if outputTokens < 1 && len(contexts) > 0 {
 		outputTokens = 1
 	}
 
@@ -408,6 +424,67 @@ func createTokenPreview(token string) string {
 	// 3个*号 + 后10位
 	suffix := token[len(token)-10:]
 	return "***" + suffix
+}
+
+// maskEmail 对邮箱进行脱敏处理
+// 规则：
+// - 用户名部分：保留前2位和后2位，中间用星号替换
+// - 域名部分：保留顶级域名和二级域名后缀，其他用星号替换
+// 示例：
+//   - caidaoli@gmail.com -> ca****li@*****.com
+//   - caidaolihz888@sun.edu.pl -> ca*********88@***.**.pl
+func maskEmail(email string) string {
+	if email == "" {
+		return ""
+	}
+
+	// 分割邮箱为用户名和域名
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		// 不是有效的邮箱格式，返回原值
+		return email
+	}
+
+	username := parts[0]
+	domain := parts[1]
+
+	// 处理用户名部分：保留前2位和后2位
+	var maskedUsername string
+	if len(username) <= 4 {
+		// 用户名太短，全部用星号替换
+		maskedUsername = strings.Repeat("*", len(username))
+	} else {
+		prefix := username[:2]
+		suffix := username[len(username)-2:]
+		middleLen := len(username) - 4
+		maskedUsername = prefix + strings.Repeat("*", middleLen) + suffix
+	}
+
+	// 处理域名部分：保留顶级域名和二级域名后缀
+	domainParts := strings.Split(domain, ".")
+	var maskedDomain string
+
+	if len(domainParts) == 1 {
+		// 只有一级域名（不常见），全部用星号替换
+		maskedDomain = strings.Repeat("*", len(domain))
+	} else if len(domainParts) == 2 {
+		// 二级域名（如 gmail.com）
+		// 主域名用星号替换，保留顶级域名
+		maskedDomain = strings.Repeat("*", len(domainParts[0])) + "." + domainParts[1]
+	} else {
+		// 三级或更多级域名（如 sun.edu.pl）
+		// 保留后两级域名，其他用星号替换
+		maskedParts := make([]string, len(domainParts))
+		for i := 0; i < len(domainParts)-2; i++ {
+			maskedParts[i] = strings.Repeat("*", len(domainParts[i]))
+		}
+		// 保留最后两级
+		maskedParts[len(domainParts)-2] = domainParts[len(domainParts)-2]
+		maskedParts[len(domainParts)-1] = domainParts[len(domainParts)-1]
+		maskedDomain = strings.Join(maskedParts, ".")
+	}
+
+	return maskedUsername + "@" + maskedDomain
 }
 
 // handleTokenPoolAPI 处理Token池API请求 - 恢复多token显示
@@ -494,7 +571,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 		// 构建token数据
 		tokenData := map[string]any{
 			"index":           i,
-			"user_email":      userEmail,
+			"user_email":      maskEmail(userEmail), // 对邮箱进行脱敏处理
 			"token_preview":   createTokenPreview(tokenInfo.AccessToken),
 			"auth_type":       strings.ToLower(authConfig.AuthType),
 			"remaining_usage": available,
